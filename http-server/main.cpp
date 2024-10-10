@@ -9,7 +9,6 @@
 #include <unistd.h>
 #include <pthread.h>
 #include "channel.h"
-#include "vector.h"
 
 // TODO: How do we support multiple connections per thread? Switch on the read per connection?
 // But how do we know whether data is available? We probably have to use select to check whether 
@@ -18,15 +17,14 @@
 //
 void* handleConnections(void* args) {
 	channel_t* chan = (channel_t*) args;
-	// We would need a readBuf for each connection. We might be able to just parse the content we 
-	// currently have and assemble the result after reading from the socket again... i don't know right now
-	vector_t<uint8_t>* readBuf = newVector<uint8_t>(65536);
 
 	while (true) {
 		int sfd = recv(chan);
-		// Maybe we should use the buf inside the vec directly
-		uint8_t buf[1024];
-		fd_set set;
+		// We only support http requests up to a size limit of 8192 bytes, thus we don't 
+		// use a vector anymore for dynamic size. This removes the overhead of polling multiple times when 
+		// the buffer is too small to fit all the data.
+		uint8_t buf[8192];
+		// fd_set set;
 
 		// TODO: Refactor this to support multiple connections per thread using 
 		// select.
@@ -36,45 +34,14 @@ void* handleConnections(void* args) {
 			if (n == -1 || n == 0) {
 				if (close(sfd) == -1) {
 					fprintf(stderr, "Failed to close socket\n");
+					return NULL;
 				}
 
 				fprintf(stdout, "connection closed\n");
 				break;
 			}
 
-			pushMany(readBuf, buf, n);
-
-			while (true) {
-				FD_SET(sfd, &set);
-				struct timeval t = {0};
-				int retval = select(sfd + 1, &set, NULL, NULL, &t);
-
-				if (retval == -1) {
-					fprintf(stderr, "Failed to select\n");
-					break;
-				} else if (retval) {
-					// Here we can introduce multiple connections
-					if (FD_ISSET(sfd, &set)) {
-						printf("is set\n");
-					}
-
-					int n = read(sfd, &buf, sizeof(buf));
-					if (n == -1 || n == 0) {
-						if (close(sfd) == -1) {
-							fprintf(stderr, "Failed to close socket\n");
-						}
-
-						fprintf(stdout, "connection closed\n");
-						break;
-					}
-
-					pushMany(readBuf, buf, n);
-				} else {
-					break;
-				}
-			}
-
-			printf("%.*s", readBuf->len, readBuf->buf);
+			printf("%.*s", n, buf);
 		}
 	}
 
